@@ -579,35 +579,41 @@ export default function App() {
               </div>
               
               {freeChances > 0 ? (
-                <button
-                  type="submit"
-                  disabled={isGenerating}
-                  className="w-full py-3 sm:py-4 px-6 bg-gradient-to-r from-red-500 to-rose-600 text-white font-bold text-lg rounded-xl shadow-lg hover:shadow-xl hover:from-rose-600 hover:to-red-700 focus:outline-none focus:ring-4 focus:ring-rose-300 focus:ring-offset-2 transition-all duration-300 disabled:from-gray-400 disabled:to-gray-500 disabled:shadow-none disabled:transform-none"
-                >
-                  <span role="img" aria-label="shaking-bell" className="mr-2">🔔</span>
-                  摇签求缘 ({freeChances}次免费)
-                </button>
+                <div className="w-full space-y-4">
+                  <button
+                    type="submit"
+                    disabled={isGenerating}
+                    className="w-full py-3 sm:py-4 px-6 bg-gradient-to-r from-red-500 to-rose-600 text-white font-bold text-lg rounded-xl shadow-lg hover:shadow-xl hover:from-rose-600 hover:to-red-700 focus:outline-none focus:ring-4 focus:ring-rose-300 focus:ring-offset-2 transition-all duration-300 disabled:from-gray-400 disabled:to-gray-500 disabled:shadow-none disabled:transform-none"
+                  >
+                    <span role="img" aria-label="shaking-bell" className="mr-2">🔔</span>
+                    摇签求缘 ({freeChances}次免费)
+                  </button>
+                </div>
               ) : (
                 <div className="w-full space-y-4">
                   <p className="text-center text-lg font-semibold text-gray-700">免费机会已用完</p>
-                  <button
-                    type="button"
-                    onClick={() => setShowShareModal(true)}
-                    className="w-full py-3 sm:py-4 px-6 bg-gradient-to-r from-pink-500 to-rose-500 text-white font-bold text-lg rounded-xl shadow-lg hover:shadow-xl hover:from-rose-600 hover:to-pink-600 focus:outline-none focus:ring-4 focus:ring-pink-300 focus:ring-offset-2 transition-all duration-300"
-                  >
-                    <span role="img" aria-label="social-media" className="mr-2">📸</span>
-                    分享小红书，免费获得一次
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShowPurchaseModal(true)}
-                    className="w-full py-3 sm:py-4 px-6 bg-gradient-to-r from-amber-400 to-amber-600 text-white font-bold text-lg rounded-xl shadow-lg hover:shadow-xl hover:from-amber-600 hover:to-amber-700 focus:outline-none focus:ring-4 focus:ring-amber-300 focus:ring-offset-2 transition-all duration-300"
-                  >
-                    <span role="img" aria-label="shopping-cart" className="mr-2">🛒</span>
-                    立即购买 (¥28.8)
-                  </button>
                 </div>
               )}
+
+              <div className="w-full space-y-4 pt-4 border-t-2 border-gray-100">
+                <p className="text-center text-sm font-medium text-gray-600">更多获取机会的方式</p>
+                <button
+                  type="button"
+                  onClick={() => setShowShareModal(true)}
+                  className="w-full py-3 px-6 bg-gradient-to-r from-pink-500 to-rose-500 text-white font-bold text-lg rounded-xl shadow-lg hover:shadow-xl hover:from-rose-600 hover:to-pink-600 focus:outline-none focus:ring-4 focus:ring-pink-300 focus:ring-offset-2 transition-all duration-300"
+                >
+                  <span role="img" aria-label="social-media" className="mr-2">📸</span>
+                  分享小红书，免费获得一次
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setShowPurchaseModal(true)}
+                  className="w-full py-3 px-6 bg-gradient-to-r from-amber-400 to-amber-600 text-white font-bold text-lg rounded-xl shadow-lg hover:shadow-xl hover:from-amber-600 hover:to-amber-700 focus:outline-none focus:ring-4 focus:ring-amber-300 focus:ring-offset-2 transition-all duration-300"
+                >
+                  <span role="img" aria-label="shopping-cart" className="mr-2">🛒</span>
+                  立即购买 (¥28.8)
+                </button>
+              </div>
             </form>
           </div>
         );
@@ -656,26 +662,37 @@ export default function App() {
               </p>
             </div>
             
-            <div className="mt-6 sm:mt-8 w-full flex">
+            <div className="mt-6 sm:mt-8 w-full space-y-4">
+              <div className="flex space-x-4">
+                <button
+                  onClick={async () => {
+                    // 清除结果并返回输入页面
+                    setStep('input');
+                    setResult(null);
+                    setIsGenerating(false);
+                    // 重置生成相关状态
+                    setModalMessage(null);
+                    // 刷新用户数据，确保免费机会数量正确
+                    await fetchUserData();
+                    // 如果没有免费机会，显示相应的提示信息
+                    if (freeChances <= 0) {
+                      setModalMessage('免费机会已用完，请通过分享或购买获取更多机会。');
+                    }
+                  }}
+                  className="flex-1 py-3 sm:py-4 px-6 bg-gray-200 text-gray-800 font-semibold rounded-xl hover:bg-gray-300 transition-colors duration-300"
+                >
+                  <span role="img" aria-label="repeat" className="mr-2">🔄</span>
+                  重新求签
+                </button>
+              </div>
+              
               <button
-                onClick={async () => {
-                  // 清除结果并返回输入页面
-                  setStep('input');
-                  setResult(null);
-                  setIsGenerating(false);
-                  // 重置生成相关状态
-                  setModalMessage(null);
-                  // 刷新用户数据，确保免费机会数量正确
-                  await fetchUserData();
-                  // 如果没有免费机会，显示相应的提示信息
-                  if (freeChances <= 0) {
-                    setModalMessage('免费机会已用完，请通过分享或购买获取更多机会。');
-                  }
-                }}
-                className="flex-1 py-3 sm:py-4 px-6 bg-gray-200 text-gray-800 font-semibold rounded-xl hover:bg-gray-300 transition-colors duration-300"
+                type="button"
+                onClick={() => setShowShareModal(true)}
+                className="w-full py-3 sm:py-4 px-6 bg-gradient-to-r from-pink-500 to-rose-500 text-white font-bold text-lg rounded-xl shadow-lg hover:shadow-xl hover:from-rose-600 hover:to-pink-600 focus:outline-none focus:ring-4 focus:ring-pink-300 focus:ring-offset-2 transition-all duration-300"
               >
-                <span role="img" aria-label="repeat" className="mr-2">🔄</span>
-                重新求签
+                <span role="img" aria-label="social-media" className="mr-2">📸</span>
+                分享小红书，免费获得一次
               </button>
             </div>
           </div>

@@ -39,22 +39,20 @@ UserManager.init_db(app)
 
 # 创建生成任务表
 with app.app_context():
-    db = UserManager.get_db()
-    cursor = db.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS generation_tasks (
-            id TEXT PRIMARY KEY,
-            user_id TEXT,
-            status TEXT DEFAULT 'PROCESSING',
-            result TEXT,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            birth_date TEXT,
-            birth_time TEXT,
-            birth_place TEXT,
-            FOREIGN KEY (user_id) REFERENCES users (id)
-        )
-    ''')
-    db.commit()
+    with UserManager.get_db_cursor() as cursor:
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS generation_tasks (
+                id TEXT PRIMARY KEY,
+                user_id TEXT,
+                status TEXT DEFAULT 'PROCESSING',
+                result TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                birth_date TEXT,
+                birth_time TEXT,
+                birth_place TEXT,
+                FOREIGN KEY (user_id) REFERENCES users (id)
+            )
+        ''')
 
 # 导入支付配置
 from .payment_config import WECHAT_PAY_CONFIG, PAYMENT_AMOUNTS
@@ -280,15 +278,12 @@ def submit_generation_task():
     
         # 保存任务到数据库
         with app.app_context():
-            db = UserManager.get_db()
-            cursor = db.cursor()
-            created_at = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            cursor.execute('''
-                INSERT INTO generation_tasks (id, user_id, birth_date, birth_time, birth_place, created_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-            ''', (task_id, user_id, birth_date, birth_time, birth_place, created_at))
-            db.commit()
-            cursor.close()  # 关闭游标
+            with UserManager.get_db_cursor() as cursor:
+                created_at = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                cursor.execute('''
+                    INSERT INTO generation_tasks (id, user_id, birth_date, birth_time, birth_place, created_at)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                ''', (task_id, user_id, birth_date, birth_time, birth_place, created_at))
     
         # 减少用户免费机会
         new_chances = user['free_chances'] - 1
@@ -305,15 +300,12 @@ def submit_generation_task():
             
                 # 更新任务状态和结果
                 with app.app_context():
-                    db = UserManager.get_db()
-                    cursor = db.cursor()
-                    cursor.execute('''
-                        UPDATE generation_tasks
-                        SET status = 'SUCCESS', result = ?
-                        WHERE id = ?
-                    ''', (result_json, task_id))
-                    db.commit()
-                    cursor.close()  # 关闭游标
+                    with UserManager.get_db_cursor() as cursor:
+                        cursor.execute('''
+                            UPDATE generation_tasks
+                            SET status = 'SUCCESS', result = ?
+                            WHERE id = ?
+                        ''', (result_json, task_id))
                 
                 logger.info(f"任务 {task_id} 生成成功")
                 
@@ -331,15 +323,12 @@ def submit_generation_task():
             except Exception as e:
                 logger.error(f"异步任务错误: {str(e)}")
                 with app.app_context():
-                    db = UserManager.get_db()
-                    cursor = db.cursor()
-                    cursor.execute('''
-                        UPDATE generation_tasks
-                        SET status = 'FAILED', result = ?
-                        WHERE id = ?
-                    ''', (str(e), task_id))
-                    db.commit()
-                    cursor.close()  # 关闭游标
+                    with UserManager.get_db_cursor() as cursor:
+                        cursor.execute('''
+                            UPDATE generation_tasks
+                            SET status = 'FAILED', result = ?
+                            WHERE id = ?
+                        ''', (str(e), task_id))
                 
                 # 如果提供了回调URL，发送失败通知
                 if callback_url:
@@ -443,14 +432,12 @@ def create_payment():
             
             # 记录订单信息到数据库
             with app.app_context():
-                db = UserManager.get_db()
-                cursor = db.cursor()
-                created_at = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-                cursor.execute('''
-                    INSERT INTO payment_orders (order_id, user_id, product_type, amount, status)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (out_trade_no, user_id, product_type, amount, 'PENDING'))
-                db.commit()
+                with UserManager.get_db_cursor() as cursor:
+                    created_at = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                    cursor.execute('''
+                        INSERT INTO payment_orders (order_id, user_id, product_type, amount, status)
+                        VALUES (?, ?, ?, ?, ?)
+                    ''', (out_trade_no, user_id, product_type, amount, 'PENDING'))
             
             return jsonify({
                 'order_id': out_trade_no,
@@ -488,37 +475,35 @@ def payment_callback():
             
             # 从数据库查询订单信息获取用户ID
             with app.app_context():
-                db = UserManager.get_db()
-                cursor = db.cursor()
-                cursor.execute('SELECT user_id, product_type FROM payment_orders WHERE order_id = ?', (out_trade_no,))
-                order = cursor.fetchone()
-                
-                if order:
-                    user_id = order['user_id']
-                    product_type = order['product_type']
+                with UserManager.get_db_cursor() as cursor:
+                    cursor.execute('SELECT user_id, product_type FROM payment_orders WHERE order_id = ?', (out_trade_no,))
+                    order = cursor.fetchone()
                     
-                    # 根据商品类型增加相应的免费机会
-                    if product_type == 'single':
-                        chances = 1
-                    elif product_type == 'monthly':
-                        chances = 10
-                    elif product_type == 'yearly':
-                        chances = 100
+                    if order:
+                        user_id = order['user_id']
+                        product_type = order['product_type']
+                        
+                        # 根据商品类型增加相应的免费机会
+                        if product_type == 'single':
+                            chances = 1
+                        elif product_type == 'monthly':
+                            chances = 10
+                        elif product_type == 'yearly':
+                            chances = 100
+                        else:
+                            chances = 1
+                        
+                        # 更新用户免费机会
+                        user = UserManager.get_user(user_id)
+                        if user:
+                            new_chances = user['free_chances'] + chances
+                            UserManager.update_free_chances(user_id, new_chances)
+                            logger.info(f"用户 {user_id} 购买{product_type}成功，增加 {chances} 次免费机会")
+                        
+                        # 更新订单状态
+                        cursor.execute('UPDATE payment_orders SET status = ? WHERE order_id = ?', ('SUCCESS', out_trade_no))
                     else:
-                        chances = 1
-                    
-                    # 更新用户免费机会
-                    user = UserManager.get_user(user_id)
-                    if user:
-                        new_chances = user['free_chances'] + chances
-                        UserManager.update_free_chances(user_id, new_chances)
-                        logger.info(f"用户 {user_id} 购买{product_type}成功，增加 {chances} 次免费机会")
-                    
-                    # 更新订单状态
-                    cursor.execute('UPDATE payment_orders SET status = ? WHERE order_id = ?', ('SUCCESS', out_trade_no))
-                    db.commit()
-                else:
-                    logger.error(f"订单 {out_trade_no} 不存在")
+                        logger.error(f"订单 {out_trade_no} 不存在")
         else:
             # 支付失败
             out_trade_no = result.get('out_trade_no', '')
@@ -528,20 +513,16 @@ def payment_callback():
             # 更新订单状态
             if out_trade_no:
                 with app.app_context():
-                    db = UserManager.get_db()
-                    cursor = db.cursor()
-                    cursor.execute('UPDATE payment_orders SET status = ?, error_msg = ? WHERE order_id = ?', ('FAILED', error_msg, out_trade_no))
-                    db.commit()
+                    with UserManager.get_db_cursor() as cursor:
+                        cursor.execute('UPDATE payment_orders SET status = ?, error_msg = ? WHERE order_id = ?', ('FAILED', error_msg, out_trade_no))
     
     # 更新支付记录
     with app.app_context():
-        db = UserManager.get_db()
-        cursor = db.cursor()
-        cursor.execute('''
-            INSERT INTO payment_records (order_id, user_id, amount, status, error_msg)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (out_trade_no, user_id, int(result.get('total_fee', 0))/100, 'FAILED', error_msg))
-        db.commit()
+        with UserManager.get_db_cursor() as cursor:
+            cursor.execute('''
+                INSERT INTO payment_records (order_id, user_id, amount, status, error_msg)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (out_trade_no, user_id, int(result.get('total_fee', 0))/100, 'FAILED', error_msg))
 
     # 返回成功响应给微信服务器
     return '<xml><return_code><![CDATA[SUCCESS]]></return_code><return_msg><![CDATA[OK]]></return_msg></xml>'
@@ -556,13 +537,11 @@ def get_generation_status(task_id):
     """
     try:
         with app.app_context():
-            db = UserManager.get_db()
-            cursor = db.cursor()
-            cursor.execute('''
-                SELECT status FROM generation_tasks WHERE id = ?
-            ''', (task_id,))
-            task = cursor.fetchone()
-            cursor.close()  # 关闭游标
+            with UserManager.get_db_cursor() as cursor:
+                cursor.execute('''
+                    SELECT status FROM generation_tasks WHERE id = ?
+                ''', (task_id,))
+                task = cursor.fetchone()
         
         if not task:
             logger.warning(f"任务 {task_id} 不存在")
@@ -580,13 +559,11 @@ def get_generation_result(task_id):
     """
     try:
         with app.app_context():
-            db = UserManager.get_db()
-            cursor = db.cursor()
-            cursor.execute('''
-                SELECT status, result FROM generation_tasks WHERE id = ?
-            ''', (task_id,))
-            task = cursor.fetchone()
-            cursor.close()  # 关闭游标
+            with UserManager.get_db_cursor() as cursor:
+                cursor.execute('''
+                    SELECT status, result FROM generation_tasks WHERE id = ?
+                ''', (task_id,))
+                task = cursor.fetchone()
         
         if not task:
             logger.warning(f"任务 {task_id} 不存在")
