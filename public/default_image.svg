@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <rect width="1024" height="1024" fill="#f8fafc"/>
+  <text x="512" y="450" font-family="Arial, sans-serif" font-size="48" text-anchor="middle" fill="#94a3b8">画像生成失败</text>
+  <text x="512" y="520" font-family="Arial, sans-serif" font-size="32" text-anchor="middle" fill="#94a3b8">请稍后重试</text>
+  <circle cx="512" cy="300" r="100" fill="#f1f5f9" stroke="#cbd5e1" stroke-width="4"/>
+  <path d="M462 300l30 30 70-70" stroke="#ef4444" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
