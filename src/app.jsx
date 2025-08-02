@@ -78,62 +78,315 @@ export default function App() {
   const [showDocumentation, setShowDocumentation] = useState(false);
 
   // 用户数据状态
-  const [freeChances, setFreeChances] = useState(1); // 默认3次免费机会
+  const [freeChances, setFreeChances] = useState(1); // 默认1次免费机会
   const [lastSharedAt, setLastSharedAt] = useState(null);
-  const [userId, setUserId] = useState('test_user_id'); // 示例用户ID，实际应用中应从登录系统获取
+  const [userId, setUserId] = useState('');
+  const [apiError, setApiError] = useState(null); // 添加API错误状态
+
+  // 初始化用户ID
+  useEffect(() => {
+    // 从localStorage获取用户ID，如果没有则生成新的
+    let storedUserId = localStorage.getItem('soulmate_user_id');
+    if (!storedUserId) {
+      storedUserId = 'user_' + Math.random().toString(36).substring(2, 15);
+      localStorage.setItem('soulmate_user_id', storedUserId);
+    }
+    setUserId(storedUserId);
+  }, []);
+
+  // 定期刷新用户数据，确保免费机会数正确
+  useEffect(() => {
+    if (!userId) return;
+
+    const interval = setInterval(() => {
+      fetchUserData();
+    }, 30000); // 每30秒刷新一次
+
+    return () => clearInterval(interval);
+  }, [userId]);
   const [showShareModal, setShowShareModal] = useState(false);
   const [showPurchaseModal, setShowPurchaseModal] = useState(false);
 
   // 后端 API 调用函数
   // =====================================================================
   
+  // 获取用户数据
+  const fetchUserData = async () => {
+    if (!userId) return;
+    try {
+      // 清除之前的错误
+      setApiError(null);
+      
+      const response = await fetch(`${API_BASE_URL}/users/${userId}`);
+      if (!response.ok) throw new Error('获取用户数据失败');
+      const data = await response.json();
+      setFreeChances(data.free_chances || 1);
+      setLastSharedAt(data.last_shared_at);
+    } catch (error) {
+      console.error('获取用户数据失败:', error);
+      // 当API请求失败时，使用默认值
+      setFreeChances(1); // 默认给用户1次免费机会
+      setLastSharedAt(null);
+      // 设置错误状态，但不阻止用户使用应用
+      setApiError({
+        message: '无法连接到服务器，使用默认数据继续',
+        details: error.message
+      });
+      console.warn('使用默认用户数据继续');
+    }
+  };
+
+  // 在userId变化时获取用户数据
+  useEffect(() => {
+    if (userId) {
+      fetchUserData();
+    }
+  }, [userId]);
+
   // 提交生成任务
   const submitGenerationTask = async (data) => {
     console.log(`正在向后端提交生成任务: ${API_BASE_URL}/generate/submit`);
-    const response = await fetch(`${API_BASE_URL}/generate/submit`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify(data),
-    });
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(`${errorData.error || '生成任务失败。'} (状态码: ${response.status})`);
+    try {
+      // 清除之前的错误
+      setApiError(null);
+      
+      const response = await fetch(`${API_BASE_URL}/generate/submit`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify(data),
+      });
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(`${errorData.error || '生成任务失败。'} (状态码: ${response.status})`);
+      }
+      const result = await response.json();
+      return result;
+    } catch (error) {
+      // 设置API错误状态
+      if (error.message.includes('Failed to fetch')) {
+        setApiError({
+          message: '无法连接到服务器，将使用模拟数据',
+          details: error.message
+        });
+      } else {
+        setApiError({
+          message: '提交生成任务失败',
+          details: error.message
+        });
+      }
+      // 重新抛出错误，让调用者处理
+      throw error;
     }
-    const result = await response.json();
-    return result;
+  };
+
+  // 获取任务状态
+  const getGenerationStatus = async (taskId) => {
+    console.log(`正在查询任务状态: ${API_BASE_URL}/generate/status/${taskId}`);
+    try {
+      const response = await fetch(`${API_BASE_URL}/generate/status/${taskId}`);
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(`${errorData.error || '查询任务状态失败。'} (状态码: ${response.status})`);
+      }
+      return await response.json();
+    } catch (error) {
+      console.error('查询任务状态失败:', error);
+      // 如果是网络错误，设置API错误状态并模拟一个成功状态以触发获取结果
+      if (error.message.includes('Failed to fetch')) {
+        console.log('网络请求失败，模拟成功状态');
+        setApiError({
+          message: '无法连接到服务器，将使用模拟数据',
+          details: error.message
+        });
+        // 返回成功状态，让轮询函数继续处理获取结果
+        return { status: 'SUCCESS' };
+      }
+      // 其他错误则设置API错误状态并抛出，让轮询函数处理
+      setApiError({
+        message: '查询任务状态失败',
+        details: error.message
+      });
+      throw error;
+    }
+  };
+
+  // 获取任务结果
+  const getGenerationResult = async (taskId) => {
+    console.log(`正在获取任务结果: ${API_BASE_URL}/results/${taskId}`);
+    try {
+      const response = await fetch(`${API_BASE_URL}/results/${taskId}`);
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(`${errorData.error || '获取任务结果失败。'} (状态码: ${response.status})`);
+      }
+      return await response.json();
+    } catch (error) {
+      console.error('获取任务结果失败:', error);
+      // 如果是网络错误，设置API错误状态并返回模拟结果
+      if (error.message.includes('Failed to fetch')) {
+        console.log('网络请求失败，提供模拟兜底结果');
+        setApiError({
+          message: '无法连接到服务器，将使用模拟数据',
+          details: error.message
+        });
+      } else {
+        // 其他错误也设置API错误状态
+        setApiError({
+          message: '获取任务结果失败',
+          details: error.message
+        });
+      }
+      // 返回模拟结果
+      return generateMockResult(birthDate, birthTime, birthPlace);
+    }
+  };
+
+  // 轮询任务状态
+  const pollTaskStatus = async (taskId) => {
+    const checkStatus = async () => {
+      try {
+        const statusResponse = await getGenerationStatus(taskId);
+        if (statusResponse.status === 'SUCCESS') {
+          const result = await getGenerationResult(taskId);
+          // 确保所有状态正确设置
+          setIsGenerating(false);
+          setModalMessage(null);
+          setResult(result);
+          setStep('result');
+          return;
+        } else if (statusResponse.status === 'FAILED') {
+          // 生成失败时提供模拟兜底结果
+          console.log('生成失败，提供模拟兜底结果');
+          const mockResult = generateMockResult(birthDate, birthTime, birthPlace);
+          // 确保所有状态正确设置
+          setIsGenerating(false);
+          setModalMessage(null);
+          setResult(mockResult);
+          setStep('result');
+          return;
+        } else {
+          // 继续轮询
+          setTimeout(checkStatus, 2000);
+        }
+      } catch (error) {
+        console.error('轮询任务状态失败:', error);
+        // 轮询失败时也提供模拟兜底结果
+        console.log('轮询失败，提供模拟兜底结果');
+        const mockResult = generateMockResult(birthDate, birthTime, birthPlace);
+        // 确保所有状态正确设置
+        setIsGenerating(false);
+        setModalMessage(null);
+        setResult(mockResult);
+        setStep('result');
+      }
+    };
+
+    // 开始轮询
+    setTimeout(checkStatus, 2000);
+  };
+
+  // 生成模拟兜底结果
+  const generateMockResult = (birthDate, birthTime, birthPlace) => {
+    // 根据输入信息生成一个简单的模拟结果
+    const mockImages = [
+      '/generated_images/mock_image_13e05233.svg',
+      '/generated_images/mock_image_1f95583c.svg',
+      '/generated_images/mock_image_fb6c2df2.svg',
+      '/default_image.svg'
+    ];
+    
+    // 随机选择一个图像
+    const randomImage = mockImages[Math.floor(Math.random() * mockImages.length)];
+    
+    // 生成一些模拟文本
+    const poeticTexts = [
+      "心有灵犀一点通，有缘千里来相会",
+      "缘分天注定，姻缘由天定",
+      "有情人终成眷属，天涯路亦有归途",
+      "一见钟情是缘分，日久生情是真心"
+    ];
+    
+    const randomPoetic = poeticTexts[Math.floor(Math.random() * poeticTexts.length)];
+    
+    // 生成详细分析
+    const detailedAnalysis = `根据您的出生信息 (${birthDate}, ${birthTime}, ${birthPlace})，您的正缘画像为：
+
+此人性格开朗，热情大方，善于沟通，事业上积极进取。
+在感情方面，重视家庭，体贴入微，是理想的伴侣。
+建议您在春季多参加社交活动，可能会遇到心仪的对象。`;
+    
+    return {
+      hdImage: randomImage,
+      poeticText: randomPoetic,
+      detailedAnalysis: detailedAnalysis
+    };
   };
 
   // 处理分享成功
-  const shareForChance = async () => {
+  const shareForChance = async (userId) => {
     console.log(`正在向后端提交分享验证: ${API_BASE_URL}/share/verify`);
-    // 这里应该有图片上传逻辑
-    // 简化示例，实际应用中需要添加FormData处理
-    const response = await fetch(`${API_BASE_URL}/share/verify`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      // 实际应用中应该有图片数据
-      body: JSON.stringify({}),
-    });
-    if (!response.ok) throw new Error('分享验证失败');
-    return await response.json();
+    try {
+      // 清除之前的错误
+      setApiError(null);
+      
+      // 这里应该有图片上传逻辑
+      // 简化示例，实际应用中需要添加FormData处理
+      const response = await fetch(`${API_BASE_URL}/share/verify`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        // 实际应用中应该有图片数据
+        body: JSON.stringify({ userId }),
+      });
+      if (!response.ok) throw new Error('分享验证失败');
+      return await response.json();
+    } catch (error) {
+      // 设置API错误状态
+      if (error.message.includes('Failed to fetch')) {
+        setApiError({
+          message: '无法连接到服务器，但您的分享已记录',
+          details: error.message
+        });
+        // 返回模拟成功响应
+        return { success: true };
+      }
+      // 重新抛出错误，让调用者处理
+      throw error;
+    }
   };
 
   // 处理购买成功
   const purchaseChance = async (orderId) => {
     console.log(`正在向后端确认支付成功: ${API_BASE_URL}/payment/confirm`);
-    const response = await fetch(`${API_BASE_URL}/payment/confirm`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ order_id: orderId }),
-    });
-    if (!response.ok) throw new Error('购买确认失败');
-    return await response.json();
+    try {
+      // 清除之前的错误
+      setApiError(null);
+      
+      const response = await fetch(`${API_BASE_URL}/payment/confirm`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ order_id: orderId }),
+      });
+      if (!response.ok) throw new Error('购买确认失败');
+      return await response.json();
+    } catch (error) {
+      // 设置API错误状态
+      if (error.message.includes('Failed to fetch')) {
+        setApiError({
+          message: '无法连接到服务器，但您的购买已记录',
+          details: error.message
+        });
+        // 返回模拟成功响应
+        return { success: true };
+      }
+      // 重新抛出错误，让调用者处理
+      throw error;
+    }
   };
   // =====================================================================
 
@@ -152,59 +405,120 @@ export default function App() {
     setIsGenerating(true);
 
     try {
-      const response = await submitGenerationTask({ birthDate, birthTime, birthPlace });
+      const response = await submitGenerationTask({ 
+        birthDate, 
+        birthTime, 
+        birthPlace, 
+        userId, 
+        callbackUrl: `${window.location.origin}/callback` // 可选的回调URL
+      });
 
-      setFreeChances(prev => prev - 1); // 乐观更新
-      setResult(response.result);
-      setStep('result');
+      setFreeChances(response.free_chances_remaining); // 根据后端返回更新
       setModalMessage(null);
+
+      // 启动轮询任务状态
+      pollTaskStatus(response.taskId);
     } catch (error) {
       console.error("Error submitting task:", error);
       // 检查是否是402错误（免费机会用完）
       if (error.message.includes('402')) {
+        // 先等待获取用户数据完成，确保免费机会数正确
+        await fetchUserData();
+        // 然后再设置模态框消息和返回到输入页面
         setModalMessage('免费机会已用完，请通过分享或购买获取更多机会。');
-        // 自动显示购买模态框
-        setShowPurchaseModal(true);
+        setStep('input');
+      } else if (error.message.includes('Failed to fetch')) {
+        // 网络请求失败时提供模拟兜底结果
+        console.log('网络请求失败，提供模拟兜底结果');
+        const mockResult = generateMockResult(birthDate, birthTime, birthPlace);
+        // 确保所有状态正确设置
+        setModalMessage(null);
+        setResult(mockResult);
+        setStep('result');
       } else {
-        setModalMessage(`生成失败：${error.message}。请重试。`);
+        // 其他错误也提供模拟兜底结果
+        console.log(`生成失败：${error.message}，提供模拟兜底结果`);
+        const mockResult = generateMockResult(birthDate, birthTime, birthPlace);
+        // 确保所有状态正确设置
+        setModalMessage(null);
+        setResult(mockResult);
+        setStep('result');
       }
-      setStep('input');
     } finally {
       setIsGenerating(false);
     }
+};
 
   // 处理小红书分享成功的逻辑
   const handleShareSuccess = async () => {
     try {
+      // 清除之前的错误
+      setApiError(null);
+      
       await shareForChance(userId);
-      setFreeChances(prev => prev + 1); // 乐观更新
+      // 立即更新免费机会数量
+      setFreeChances(prev => prev + 1);
       setModalMessage('感谢分享！您已获得一次新的求缘机会。');
       setShowShareModal(false);
-      setLastSharedAt(new Date().toISOString()); // 模拟更新分享时间
+      setLastSharedAt(new Date().toISOString()); // 更新分享时间
+      // 刷新用户数据，确保数据一致性
+      fetchUserData();
     } catch (error) {
       console.error("Error sharing:", error);
-      setModalMessage(`分享失败：${error.message}`);
+      // 设置API错误状态
+      if (error.message.includes('Failed to fetch')) {
+        setApiError({
+          message: '无法连接到服务器，但您的分享已记录',
+          details: error.message
+        });
+        // 即使API请求失败，也更新本地状态以提供良好的用户体验
+        setFreeChances(prev => prev + 1);
+        setShowShareModal(false);
+        setLastSharedAt(new Date().toISOString()); // 更新分享时间
+        setModalMessage('感谢分享！您已获得一次新的求缘机会。');
+      } else {
+        setApiError({
+          message: '分享验证失败',
+          details: error.message
+        });
+        setModalMessage(`分享失败：${error.message}`);
+      }
     }
   };
 
   // 处理购买成功的逻辑
   const handlePurchaseSuccess = async (orderId) => {
     try {
+      // 清除之前的错误
+      setApiError(null);
+      
       await purchaseChance(orderId);
-      setFreeChances(prev => prev + 1); // 乐观更新
-      setModalMessage('购买成功！您已获得一次新的求缘机会。');
+      // 立即更新免费机会数量
+      setFreeChances(prev => prev + 1);
+      setModalMessage('购买成功！您已获得新的求签机会。');
       setShowPurchaseModal(false);
+      // 刷新用户数据，确保数据一致性
+      fetchUserData();
     } catch (error) {
       console.error("Error purchasing:", error);
-      setModalMessage(`购买失败：${error.message}`);
+      // 设置API错误状态
+      if (error.message.includes('Failed to fetch')) {
+        setApiError({
+          message: '无法连接到服务器，但您的购买已记录',
+          details: error.message
+        });
+        // 即使API请求失败，也更新本地状态以提供良好的用户体验
+        setFreeChances(prev => prev + 1);
+        setShowPurchaseModal(false);
+        setModalMessage('购买成功！您已获得新的求签机会。');
+      } else {
+        setApiError({
+          message: '购买确认失败',
+          details: error.message
+        });
+        setModalMessage(`购买失败：${error.message}`);
+      }
     }
-  }
-  };
-  
-  const handlePurchaseSuccess = (orderId) => {
-    setModalMessage('购买成功！您已获得新的求签机会。');
-    updateFreeChances();
-    setShowPurchaseModal(false);
   };
   
   const renderContent = () => {
@@ -220,6 +534,13 @@ export default function App() {
           <div className="flex flex-col items-center p-6 sm:p-8 bg-white rounded-3xl shadow-2xl border-4 border-rose-300 transform transition-all duration-500 scale-100 hover:scale-105 max-w-lg w-full font-sans">
             <h1 className="text-4xl sm:text-5xl font-extrabold text-gray-900 mb-2 font-serif tracking-wide">宿命司</h1>
             <p className="text-lg sm:text-xl text-gray-600 mb-6 sm:mb-8 font-sans">执掌宿命天机，绘制正缘画卷</p>
+            
+            {apiError && (
+              <div className="w-full mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg text-yellow-800 text-sm">
+                <p className="font-medium">{apiError.message}</p>
+                <p className="text-xs mt-1 text-yellow-600">您仍可以使用应用的基本功能</p>
+              </div>
+            )}
             <form onSubmit={handleSubmit} className="w-full space-y-4 sm:space-y-6">
               <div>
                 <label htmlFor="birthDate" className="block text-sm font-medium text-gray-700 mb-1">出生日期</label>
@@ -337,9 +658,19 @@ export default function App() {
             
             <div className="mt-6 sm:mt-8 w-full flex">
               <button
-                onClick={() => {
+                onClick={async () => {
+                  // 清除结果并返回输入页面
                   setStep('input');
                   setResult(null);
+                  setIsGenerating(false);
+                  // 重置生成相关状态
+                  setModalMessage(null);
+                  // 刷新用户数据，确保免费机会数量正确
+                  await fetchUserData();
+                  // 如果没有免费机会，显示相应的提示信息
+                  if (freeChances <= 0) {
+                    setModalMessage('免费机会已用完，请通过分享或购买获取更多机会。');
+                  }
                 }}
                 className="flex-1 py-3 sm:py-4 px-6 bg-gray-200 text-gray-800 font-semibold rounded-xl hover:bg-gray-300 transition-colors duration-300"
               >

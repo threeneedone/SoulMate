@@ -51,7 +51,7 @@ class UserManager:
         try:
             db = UserManager.get_db()
             cursor = db.cursor()
-            cursor.execute('INSERT INTO users (id) VALUES (?)', (user_id,))
+            cursor.execute('INSERT INTO users (id, free_chances) VALUES (?, 1)', (user_id,))
             db.commit()
             return True
         except Exception as e:

@@ -88,7 +88,12 @@ const PurchaseModal = ({ onPurchaseSuccess, onClose, API_BASE_URL }) => {
           // 支付成功
           setPaymentStatus('success');
           setMessage('支付成功！');
-          onPurchaseSuccess();
+          // 延迟调用成功回调，确保用户看到成功状态
+          setTimeout(() => {
+            onPurchaseSuccess(orderId);
+            // 自动关闭模态框
+            setTimeout(() => onClose(), 1500);
+          }, 1000);
         } else if (res.err_msg === 'get_brand_wcpay_request:cancel') {
           // 支付取消
           setPaymentStatus('failed');
@@ -185,13 +190,18 @@ const ShareModal = ({ onShareSuccess, onClose, canShareAgain }) => {
     }
 
     setIsVerifying(true);
+    // 模拟验证过程
     await new Promise(resolve => setTimeout(resolve, 2000));
     
     setIsUploadSuccess(true);
+    // 显示成功状态一段时间
     await new Promise(resolve => setTimeout(resolve, 1000));
     
     setIsVerifying(false);
+    // 调用成功回调
     onShareSuccess();
+    // 延迟关闭模态框，确保用户看到成功状态
+    setTimeout(() => onClose(), 1500);
   };
 
   return (

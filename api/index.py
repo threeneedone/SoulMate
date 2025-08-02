@@ -9,8 +9,13 @@ import time
 import random
 import datetime
 import sqlite3
+import logging
 from flask import Flask, jsonify, request, g
 from flask_cors import CORS
+
+# 配置日志
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 # JWT相关导入已移除，因为不再需要登录功能
 # import jwt
 # import datetime
@@ -138,6 +143,40 @@ def generate_real_result(birth_date, birth_time, birth_place):
 # API 路由
 # ----------------------------------------------------------------------
 
+@app.route('/api/v1/share/verify', methods=['POST']) 
+def verify_share():
+    """
+    验证用户分享行为，成功后增加免费机会
+    """
+    try:
+        data = request.json
+        user_id = data.get('userId')
+        
+        if not user_id:
+            return jsonify({'error': '用户ID不能为空'}), 400
+        
+        # 检查用户是否存在
+        user = UserManager.get_user(user_id)
+        if not user:
+            return jsonify({'error': '用户不存在'}), 404
+        
+        # 更新最后分享时间
+        UserManager.update_last_shared(user_id)
+        
+        # 增加免费机会
+        new_chances = user['free_chances'] + 1
+        UserManager.update_free_chances(user_id, new_chances)
+        
+        logger.info(f"用户 {user_id} 分享成功，增加1次免费机会，当前剩余: {new_chances}")
+        
+        return jsonify({
+            'success': True,
+            'free_chances_remaining': new_chances
+        }), 200
+    except Exception as e:
+        logger.error(f"分享验证失败: {str(e)}")
+        return jsonify({'error': '分享验证失败'}), 500
+
 @app.route('/api/v1/users/<user_id>', methods=['GET'])
 def get_user_data(user_id):
     """
@@ -196,85 +235,137 @@ def submit_generation_task():
     """
     提交一个生成任务，异步处理。
     """
-    data = request.json
-    birth_date = data.get('birthDate')
-    birth_time = data.get('birthTime')
-    birth_place = data.get('birthPlace')
+    try:
+        data = request.json
+        birth_date = data.get('birthDate')
+        birth_time = data.get('birthTime')
+        birth_place = data.get('birthPlace')
+        callback_url = data.get('callbackUrl')  # 可选的回调URL
     
-    # 为简化实现，使用固定用户ID
-    user_id = 'anonymous_user'
+        # 使用前端传递的用户ID
+        user_id = data.get('userId', 'anonymous_user')
     
-    if not all([birth_date, birth_time, birth_place]):
-        return jsonify({"error": "缺少必要的出生信息。"}), 400
+        if not all([birth_date, birth_time, birth_place]):
+            logger.warning(f"用户 {user_id} 提交的生成任务缺少必要信息")
+            return jsonify({
+                "error": "缺少必要的出生信息。",
+                "missing_fields": [
+                    field for field, value in [('birthDate', birth_date), ('birthTime', birth_time), ('birthPlace', birth_place)]
+                    if not value
+                ]
+            }), 400
     
-    # 检查用户是否有免费机会
-    user = UserManager.get_user(user_id)
+        # 检查用户是否有免费机会
+        user = UserManager.get_user(user_id)
     
-    if not user:
-        # 如果用户不存在，创建新用户
-        UserManager.create_user(user_id)
-        user = {'free_chances': 1}
+        if not user:
+            # 如果用户不存在，创建新用户
+            UserManager.create_user(user_id)
+            # 创建后从数据库中获取最新用户数据
+            user = UserManager.get_user(user_id)
+            logger.info(f"创建新用户: {user_id}, 免费机会: {user['free_chances']}")
     
-    if user['free_chances'] <= 0:
-        # 用户没有免费机会，需要付费
-        return jsonify({
-            "error": "免费机会已用完，请购买更多机会。",
-            "need_payment": True
-        }), 402
+        if user['free_chances'] <= 0:
+            # 用户没有免费机会，需要付费
+            logger.info(f"用户 {user_id} 免费机会已用完")
+            return jsonify({
+                "error": "免费机会已用完，请购买更多机会。",
+                "need_payment": True,
+                "free_chances_remaining": 0
+            }), 402
     
-    # 创建任务ID
-    task_id = os.urandom(16).hex()
+        # 创建任务ID
+        task_id = os.urandom(16).hex()
+        logger.info(f"用户 {user_id} 提交生成任务: {task_id}")
     
-    # 保存任务到数据库
-    with app.app_context():
-        db = UserManager.get_db()
-        cursor = db.cursor()
-        created_at = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        cursor.execute('''
-            INSERT INTO generation_tasks (id, user_id, birth_date, birth_time, birth_place, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (task_id, user_id, birth_date, birth_time, birth_place, created_at))
-        db.commit()
+        # 保存任务到数据库
+        with app.app_context():
+            db = UserManager.get_db()
+            cursor = db.cursor()
+            created_at = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            cursor.execute('''
+                INSERT INTO generation_tasks (id, user_id, birth_date, birth_time, birth_place, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+            ''', (task_id, user_id, birth_date, birth_time, birth_place, created_at))
+            db.commit()
+            cursor.close()  # 关闭游标
     
-    # 减少用户免费机会
-    UserManager.update_free_chances(user_id, user['free_chances'] - 1)
+        # 减少用户免费机会
+        new_chances = user['free_chances'] - 1
+        UserManager.update_free_chances(user_id, new_chances)
+        logger.info(f"用户 {user_id} 剩余免费机会: {new_chances}")
     
-    # 异步处理生成任务
-    import threading
-    def run_generation_async():
-        try:
-            # 生成结果
-            real_result = generate_real_result(birth_date, birth_time, birth_place)
-            result_json = str(real_result).replace("'", '"')
+        # 异步处理生成任务
+        import threading
+        def run_generation_async():
+            try:
+                # 生成结果
+                real_result = generate_real_result(birth_date, birth_time, birth_place)
+                result_json = str(real_result).replace("'", '"')
             
-            # 更新任务状态和结果
-            with app.app_context():
-                db = UserManager.get_db()
-                cursor = db.cursor()
-                cursor.execute('''
-                    UPDATE generation_tasks
-                    SET status = 'SUCCESS', result = ?
-                    WHERE id = ?
-                ''', (result_json, task_id))
-                db.commit()
-        except Exception as e:
-            print(f"Error in async task: {e}")
-            with app.app_context():
-                db = UserManager.get_db()
-                cursor = db.cursor()
-                cursor.execute('''
-                    UPDATE generation_tasks
-                    SET status = 'FAILED', result = ?
-                    WHERE id = ?
-                ''', (str(e), task_id))
-                db.commit()
+                # 更新任务状态和结果
+                with app.app_context():
+                    db = UserManager.get_db()
+                    cursor = db.cursor()
+                    cursor.execute('''
+                        UPDATE generation_tasks
+                        SET status = 'SUCCESS', result = ?
+                        WHERE id = ?
+                    ''', (result_json, task_id))
+                    db.commit()
+                    cursor.close()  # 关闭游标
+                
+                logger.info(f"任务 {task_id} 生成成功")
+                
+                # 如果提供了回调URL，发送通知
+                if callback_url:
+                    try:
+                        import requests
+                        requests.post(callback_url, json={
+                            'task_id': task_id,
+                            'status': 'SUCCESS',
+                            'result': real_result
+                        }, timeout=5)
+                    except Exception as e:
+                        logger.error(f"发送任务完成回调失败: {str(e)}")
+            except Exception as e:
+                logger.error(f"异步任务错误: {str(e)}")
+                with app.app_context():
+                    db = UserManager.get_db()
+                    cursor = db.cursor()
+                    cursor.execute('''
+                        UPDATE generation_tasks
+                        SET status = 'FAILED', result = ?
+                        WHERE id = ?
+                    ''', (str(e), task_id))
+                    db.commit()
+                    cursor.close()  # 关闭游标
+                
+                # 如果提供了回调URL，发送失败通知
+                if callback_url:
+                    try:
+                        import requests
+                        requests.post(callback_url, json={
+                            'task_id': task_id,
+                            'status': 'FAILED',
+                            'error': str(e)
+                        }, timeout=5)
+                    except Exception as e:
+                        logger.error(f"发送任务失败回调失败: {str(e)}")
     
-    # 启动异步线程
-    thread = threading.Thread(target=run_generation_async)
-    thread.daemon = True
-    thread.start()
+        # 启动异步线程
+        thread = threading.Thread(target=run_generation_async)
+        thread.daemon = True
+        thread.start()
     
-    return jsonify({"taskId": task_id}), 200
+        return jsonify({
+            "taskId": task_id,
+            "free_chances_remaining": new_chances,
+            "estimated_completion_time": 10  # 估计完成时间（秒）
+        }), 200
+    except Exception as e:
+        logger.error(f"提交生成任务失败: {str(e)}")
+        return jsonify({"error": "提交生成任务失败"}), 500
 
 @app.route('/api/v1/payment/create', methods=['POST'])
 def create_payment():
@@ -289,9 +380,12 @@ def create_payment():
     # 金额转换为分
     total_fee = int(amount * 100)
     
-    # 为简化实现，使用固定用户ID
-    user_id = 'anonymous_user'
+    # 获取前端传递的用户ID
+    user_id = data.get('userId')
     
+    if not user_id:
+        return jsonify({'error': '用户ID不能为空'}), 400
+
     # 检查用户是否存在
     user = UserManager.get_user(user_id)
     if not user:
@@ -460,46 +554,63 @@ def get_generation_status(task_id):
     """
     查询生成任务的当前状态。
     """
-    with app.app_context():
-        db = UserManager.get_db()
-        cursor = db.cursor()
-        cursor.execute('''
-            SELECT status FROM generation_tasks WHERE id = ?
-        ''', (task_id,))
-    task = cursor.fetchone()
-    
-    if not task:
-        return jsonify({"error": "任务不存在。"}), 404
+    try:
+        with app.app_context():
+            db = UserManager.get_db()
+            cursor = db.cursor()
+            cursor.execute('''
+                SELECT status FROM generation_tasks WHERE id = ?
+            ''', (task_id,))
+            task = cursor.fetchone()
+            cursor.close()  # 关闭游标
         
-    return jsonify({"status": task["status"]}), 200
+        if not task:
+            logger.warning(f"任务 {task_id} 不存在")
+            return jsonify({"error": "任务不存在。"}), 404
+            
+        return jsonify({"status": task["status"]}), 200
+    except Exception as e:
+        logger.error(f"查询任务状态失败: {str(e)}")
+        return jsonify({"error": "查询任务状态失败"}), 500
     
 @app.route('/api/v1/results/<task_id>', methods=['GET'])
 def get_generation_result(task_id):
     """
     获取最终的生成结果。
     """
-    with app.app_context():
-        db = UserManager.get_db()
-        cursor = db.cursor()
-        cursor.execute('''
-            SELECT status, result FROM generation_tasks WHERE id = ?
-        ''', (task_id,))
-    task = cursor.fetchone()
-    
-    if not task:
-        return jsonify({"error": "任务不存在。"}), 404
-        
-    if task["status"] != "SUCCESS":
-        return jsonify({"error": "结果尚未生成。"}), 400
-        
-    # 解析JSON结果
-    import json
     try:
-        result = json.loads(task["result"]) if task["result"] else {}
-    except json.JSONDecodeError:
-        result = {}
+        with app.app_context():
+            db = UserManager.get_db()
+            cursor = db.cursor()
+            cursor.execute('''
+                SELECT status, result FROM generation_tasks WHERE id = ?
+            ''', (task_id,))
+            task = cursor.fetchone()
+            cursor.close()  # 关闭游标
         
-    return jsonify(result), 200
+        if not task:
+            logger.warning(f"任务 {task_id} 不存在")
+            return jsonify({"error": "任务不存在。"}), 404
+            
+        if task["status"] != "SUCCESS":
+            logger.info(f"任务 {task_id} 状态为 {task['status']}，无法获取结果")
+            return jsonify({
+                "error": "结果尚未生成或生成失败。",
+                "status": task["status"]
+            }), 400
+        
+        # 解析JSON结果
+        import json
+        try:
+            result = json.loads(task["result"]) if task["result"] else {}
+        except json.JSONDecodeError as e:
+            logger.error(f"解析任务结果失败: {str(e)}")
+            result = {}
+            
+        return jsonify(result), 200
+    except Exception as e:
+        logger.error(f"获取任务结果失败: {str(e)}")
+        return jsonify({"error": "获取任务结果失败"}), 500
 
 if __name__ == '__main__':
     # 直接启动Flask应用
